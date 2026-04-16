@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LinkPulse — Monitor de Disponibilidad</title>
+  <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/dashboard.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Loader -->
+    <div id="loader" class="loader">
+      <div class="spinner"></div>
+      <p>Cargando LinkPulse...</p>
+    </div>
+  </div>
+
+  <!-- Templates de vistas -->
+  <template id="tpl-login">
+    <div class="login-container">
+      <div class="login-card">
+        <div class="logo">🟢</div>
+        <h1>LinkPulse</h1>
+        <p class="tagline">Monitor de Disponibilidad Web</p>
+
+        <div class="login-content">
+          <p>Para acceder, debes registrarte primero a través de nuestro bot de Telegram.</p>
+
+          <div class="telegram-section">
+            <p class="instruction">Escribe <code>/start</code> al bot:</p>
+            <a href="#" id="btn-open-telegram" class="btn btn-primary btn-large">
+              📱 Abrir Telegram
+            </a>
+          </div>
+
+          <div class="footer-text">
+            <p>El bot te enviará un enlace personal para acceder al dashboard.</p>
+            <p class="small">Cada enlace expira en 7 días.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <template id="tpl-dashboard">
+    <div class="dashboard">
+      <!-- Header -->
+      <header class="dashboard-header">
+        <div class="header-left">
+          <h1>🟢 LinkPulse</h1>
+        </div>
+        <div class="header-center">
+          <nav class="nav-tabs">
+            <a href="#/dashboard" class="nav-tab active" data-view="dashboard">
+              📊 Dashboard
+            </a>
+            <a href="#/global" class="nav-tab" data-view="global">
+              🌐 Globales
+            </a>
+            <a href="#/settings" class="nav-tab" data-view="settings">
+              ⚙️ Ajustes
+            </a>
+          </nav>
+        </div>
+        <div class="header-right">
+          <div class="user-info">
+            <span class="user-avatar" id="user-avatar">U</span>
+            <span class="user-name" id="user-name">Usuario</span>
+          </div>
+          <button id="btn-logout" class="btn btn-secondary btn-small">Salir</button>
+        </div>
+      </header>
+
+      <!-- Main content -->
+      <main class="dashboard-main">
+        <!-- Vista: Dashboard -->
+        <div id="view-dashboard" class="view active">
+          <div class="view-header">
+            <h2>Mis Sitios</h2>
+            <button id="btn-add-site" class="btn btn-primary">+ Agregar Sitio</button>
+          </div>
+
+          <div id="sites-grid" class="sites-grid">
+            <!-- Cards de sitios se insertan aquí -->
+          </div>
+
+          <div id="empty-sites" class="empty-state">
+            <p>📭 No tienes sitios registrados.</p>
+            <p>Haz clic en "+ Agregar Sitio" para comenzar.</p>
+          </div>
+        </div>
+
+        <!-- Vista: Global -->
+        <div id="view-global" class="view">
+          <div class="view-header">
+            <h2>Sitios Globales</h2>
+            <div class="search-box">
+              <input
+                type="text"
+                id="search-global"
+                placeholder="Buscar por nombre o URL..."
+                class="search-input"
+              />
+            </div>
+          </div>
+
+          <div id="global-sites-table" class="sites-table">
+            <!-- Tabla de sitios globales -->
+          </div>
+
+          <div id="empty-global" class="empty-state">
+            <p>🌐 No hay sitios globales aún.</p>
+          </div>
+        </div>
+
+        <!-- Vista: Ajustes -->
+        <div id="view-settings" class="view">
+          <div class="view-header">
+            <h2>Configuración</h2>
+          </div>
+
+          <div class="settings-container">
+            <div class="settings-section">
+              <h3>Datos de la Cuenta</h3>
+              <div class="settings-item">
+                <label>Display Name:</label>
+                <p id="setting-display-name" class="setting-value">-</p>
+              </div>
+              <div class="settings-item">
+                <label>ID de Telegram:</label>
+                <p id="setting-telegram-id" class="setting-value">-</p>
+              </div>
+              <div class="settings-item">
+                <label>Registrado:</label>
+                <p id="setting-created-at" class="setting-value">-</p>
+              </div>
+            </div>
+
+            <div class="settings-section">
+              <h3>Estadísticas</h3>
+              <div class="settings-item">
+                <label>Total de Sitios:</label>
+                <p id="stat-total-sites" class="setting-value">-</p>
+              </div>
+              <div class="settings-item">
+                <label>Chequeos Hoy:</label>
+                <p id="stat-checks-today" class="setting-value">-</p>
+              </div>
+              <div class="settings-item">
+                <label>Incidentes Abiertos:</label>
+                <p id="stat-open-incidents" class="setting-value">-</p>
+              </div>
+            </div>
+
+            <div class="settings-section">
+              <h3>Acceso</h3>
+              <button id="btn-generate-link" class="btn btn-secondary">
+                🔗 Generar Nuevo Link de Acceso
+              </button>
+              <p class="help-text">
+                El nuevo link se enviará a tu bot de Telegram
+              </p>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <!-- Modal: Agregar Sitio -->
+    <div id="modal-add-site" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>Agregar Nuevo Sitio</h3>
+          <button class="modal-close">&times;</button>
+        </div>
+        <form id="form-add-site" class="modal-body">
+          <div class="form-group">
+            <label for="input-site-name">Nombre del Sitio</label>
+            <input
+              type="text"
+              id="input-site-name"
+              placeholder="Mi Blog"
+              required
+            />
+          </div>
+          <div class="form-group">
+            <label for="input-site-url">URL</label>
+            <input
+              type="url"
+              id="input-site-url"
+              placeholder="https://ejemplo.com"
+              required
+            />
+          </div>
+          <div class="form-group">
+            <label>Visibilidad</label>
+            <div class="radio-group">
+              <label class="radio-label">
+                <input type="radio" name="visibility" value="private" checked />
+                🔒 Privado
+              </label>
+              <label class="radio-label">
+                <input type="radio" name="visibility" value="global" />
+                🌐 Global
+              </label>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary modal-close-btn">Cancelar</button>
+            <button type="submit" class="btn btn-primary">Agregar Sitio</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Modal: Historial de Latencia -->
+    <div id="modal-latency" class="modal">
+      <div class="modal-content modal-latency-content">
+        <div class="modal-header">
+          <h3>📈 Historial de Latencia</h3>
+          <button class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <canvas id="latency-chart"></canvas>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- Scripts -->
+  <script src="/js/auth.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/router.js"></script>
+  <script src="/js/dashboard.js"></script>
+</body>
+</html>

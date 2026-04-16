@@ -1,0 +1,25 @@
+# ── Secretos — NUNCA subir ──
+.env
+
+# ── Base de datos local ──
+data/*.db
+data/*.db-journal
+data/*.db-shm
+data/*.db-wal
+
+# ── Dependencias ──
+node_modules/
+
+# ── Logs ──
+*.log
+logs/
+
+# ── Sistema operativo ──
+.DS_Store
+Thumbs.db
+
+# ── IDEs ──
+.vscode/
+.idea/
+*.swp
+*.swo
