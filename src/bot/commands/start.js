@@ -1,31 +1,17 @@
 // src/bot/commands/start.js
 const { getUserByTelegramId, createUser, isDisplayNameTaken } = require('../../db/supabase');
 const { generateToken } = require('../../middleware/auth');
+const supabase = require('../../db/supabase').supabaseClient || require('@supabase/supabase-js').createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
 
 const APP_URL = process.env.APP_URL || 'https://linkpulse.railway.app';
-
-// ── Estado de registro en memoria con timeouts ──────────────────────────────
-// Formato: { telegramId: { state: 'awaiting_username', telegramUsername, timestamp } }
-const stateStore = {};
-const STATE_TIMEOUT = 15 * 60 * 1000; // 15 minutos
-
-/**
- * Limpia estados expirados cada 5 minutos
- */
-setInterval(() => {
-  const now = Date.now();
-  for (const [telegramId, state] of Object.entries(stateStore)) {
-    if (now - state.timestamp > STATE_TIMEOUT) {
-      console.warn(`⏰ Estado de registro expirado para usuario ${telegramId}`);
-      delete stateStore[telegramId];
-    }
-  }
-}, 5 * 60 * 1000);
 
 /**
  * Maneja el comando /start
  * 1. Si usuario ya está registrado → envía link de acceso
- * 2. Si no → inicia flujo de registro
+ * 2. Si no → inicia flujo de registro (guarda en BD, no en memoria)
  */
 async function handleStart(ctx) {
   const telegramId = ctx.from.id;
@@ -72,14 +58,33 @@ async function handleStart(ctx) {
     }
 
     // ✅ Nuevo usuario → iniciar flujo de registro
-    console.log(`🆕 Nuevo usuario ${telegramId} - Iniciando registro`);
+    console.log(`🆕 Nuevo usuario ${telegramId} - Iniciando registro en BD`);
 
-    // Guardar estado con timestamp
-    stateStore[telegramId] = {
-      state: 'awaiting_username',
-      telegramUsername,
-      timestamp: Date.now(),
-    };
+    // Guardar estado en BD (en lugar de memoria)
+    try {
+      const { error } = await supabase
+        .from('telegram_registration_state')
+        .insert({
+          telegram_id: telegramId,
+          telegram_username: telegramUsername,
+          state: 'awaiting_username',
+          created_at: new Date(),
+        });
+
+      if (error) {
+        console.error(`❌ Error guardando estado en BD:`, error.message);
+        return ctx.reply(
+          '❌ Error al iniciar registro. Por favor intenta de nuevo.'
+        ).catch(() => {});
+      }
+
+      console.log(`📝 Estado de registro guardado en BD para usuario ${telegramId}`);
+    } catch (stateErr) {
+      console.error(`❌ Error inesperado guardando estado:`, stateErr.message);
+      return ctx.reply(
+        '❌ Error al iniciar registro. Por favor intenta de nuevo.'
+      ).catch(() => {});
+    }
 
     // Enviar mensaje pidiendo display_name
     return await ctx.reply(
@@ -92,8 +97,13 @@ async function handleStart(ctx) {
       { parse_mode: 'MarkdownV2' }
     ).catch((replyErr) => {
       console.error(`❌ Error pidiendo display_name (${telegramId}):`, replyErr.message);
-      // Limpiar estado si falla envío
-      delete stateStore[telegramId];
+      // Intentar limpiar estado de BD si falla envío
+      supabase
+        .from('telegram_registration_state')
+        .delete()
+        .eq('telegram_id', telegramId)
+        .catch(() => {});
+
       return ctx.reply(
         '❌ Error al iniciar registro. Por favor intenta de nuevo con /start.'
       ).catch(() => {});
@@ -112,23 +122,33 @@ async function handleStart(ctx) {
 /**
  * Maneja mensajes de texto cuando se espera username
  * Valida display_name y crea usuario
+ * El estado se busca en BD (no en memoria volátil)
  */
 async function handleUsernameInput(ctx) {
   const telegramId = ctx.from.id;
   const displayName = ctx.message.text.trim();
 
-  // Verificar que el usuario está en proceso de registro
-  const state = stateStore[telegramId];
-  if (!state || state.state !== 'awaiting_username') {
-    // ✅ Feedback útil en lugar de ignorar silenciosamente
-    return ctx.reply(
-      '⚠️ Primero debes ejecutar /start para registrarte.'
-    ).catch((err) => {
-      console.error(`Error respondiendo a mensaje sin contexto:`, err.message);
-    });
-  }
-
   try {
+    // Buscar estado en BD (robusto, sobrevive reinicio)
+    console.log(`🔍 Buscando estado en BD para usuario ${telegramId}`);
+
+    const { data: stateData, error: stateError } = await supabase
+      .from('telegram_registration_state')
+      .select('*')
+      .eq('telegram_id', telegramId)
+      .eq('state', 'awaiting_username')
+      .single();
+
+    if (stateError || !stateData) {
+      console.log(`⚠️ No hay estado de registro para usuario ${telegramId}`);
+      // ✅ Feedback útil en lugar de ignorar silenciosamente
+      return ctx.reply(
+        '⚠️ Primero debes ejecutar /start para registrarte.'
+      ).catch((err) => {
+        console.error(`Error respondiendo a mensaje sin contexto:`, err.message);
+      });
+    }
+
     console.log(`▶️ Display name recibido: "${displayName}" (usuario ${telegramId})`);
 
     // Validar formato de display_name
@@ -151,7 +171,13 @@ async function handleUsernameInput(ctx) {
       isTaken = await isDisplayNameTaken(displayName);
     } catch (dbErr) {
       console.error(`Error verificando disponibilidad de display_name:`, dbErr.message);
-      delete stateStore[telegramId];
+      // Limpiar estado en BD
+      await supabase
+        .from('telegram_registration_state')
+        .delete()
+        .eq('telegram_id', telegramId)
+        .catch(() => {});
+
       return ctx.reply(
         '❌ Error verificando disponibilidad. Por favor intenta de nuevo con /start.'
       ).catch(() => {});
@@ -172,18 +198,33 @@ async function handleUsernameInput(ctx) {
     let user;
     try {
       console.log(`📝 Creando usuario: display_name="${displayName}", telegram_id=${telegramId}`);
-      user = await createUser(telegramId, state.telegramUsername, displayName);
+      user = await createUser(telegramId, stateData.telegram_username, displayName);
       console.log(`✅ Usuario creado: ${user.id}`);
     } catch (createErr) {
       console.error(`❌ Error creando usuario en BD:`, createErr.message);
-      delete stateStore[telegramId];
+      // Limpiar estado en BD
+      await supabase
+        .from('telegram_registration_state')
+        .delete()
+        .eq('telegram_id', telegramId)
+        .catch(() => {});
+
       return ctx.reply(
         '❌ Error al crear tu cuenta. Por favor intenta de nuevo con /start.'
       ).catch(() => {});
     }
 
-    // Limpiar estado del registro
-    delete stateStore[telegramId];
+    // ✅ Limpiar estado del registro en BD
+    try {
+      await supabase
+        .from('telegram_registration_state')
+        .delete()
+        .eq('telegram_id', telegramId);
+      console.log(`🗑️  Estado de registro limpiado para usuario ${telegramId}`);
+    } catch (cleanErr) {
+      console.warn(`⚠️  No se pudo limpiar estado:`, cleanErr.message);
+      // No es crítico si falla la limpieza
+    }
 
     // Generar token de acceso
     try {
@@ -217,7 +258,16 @@ async function handleUsernameInput(ctx) {
 
   } catch (err) {
     console.error('❌ Error crítico en handleUsernameInput:', err);
-    delete stateStore[telegramId];
+    // Intentar limpiar estado
+    try {
+      await supabase
+        .from('telegram_registration_state')
+        .delete()
+        .eq('telegram_id', telegramId);
+    } catch (cleanErr) {
+      console.warn(`Error limpiando estado en catch:`, cleanErr.message);
+    }
+
     return ctx.reply(
       '❌ Error inesperado. Por favor intenta de nuevo con /start.'
     ).catch(() => {});
