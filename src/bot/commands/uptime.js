@@ -1,5 +1,6 @@
 // src/bot/commands/uptime.js
 const { getUserByTelegramId, getSitesByUserId, getRecentChecks } = require('../../db/supabase');
+const { escapeMarkdownV2 } = require('../../utils/markdown');
 
 async function handleUptime(ctx) {
   try {
@@ -22,8 +23,11 @@ async function handleUptime(ctx) {
       const recentChecks = await getRecentChecks(100);
       const siteChecks = recentChecks.filter((c) => c.site_id === site.id);
 
+      // ✅ Escapar nombre del sitio
+      const escapedName = escapeMarkdownV2(site.name);
+
       if (siteChecks.length === 0) {
-        msg += `⚪ *${site.name}* — Sin datos\n`;
+        msg += `⚪ *${escapedName}* — Sin datos\n`;
         continue;
       }
 
@@ -36,14 +40,20 @@ async function handleUptime(ctx) {
       );
 
       const icon = uptimePct >= 99 ? '🟢' : uptimePct >= 95 ? '🟡' : '🔴';
-      msg += `${icon} *${site.name}*\n`;
-      msg += `   └ Uptime: \`${uptimePct}%\` | Avg: \`${avgLatency}ms\`\n`;
+      msg += `${icon} *${escapedName}*\n`;
+      msg += `   └ Uptime: \`${uptimePct}%\` \\| Avg: \`${avgLatency}ms\`\n`;
     }
 
-    ctx.reply(msg, { parse_mode: 'Markdown' });
+    ctx.reply(msg, {
+      parse_mode: 'MarkdownV2',
+    }).catch((err) => {
+      console.error('Error enviando /uptime:', err.message);
+      // Enviar sin parse_mode si falla
+      ctx.reply(msg).catch(() => {});
+    });
   } catch (err) {
     console.error('Error en /uptime:', err);
-    ctx.reply('❌ Error al obtener uptime.');
+    ctx.reply('❌ Error al obtener uptime.').catch(() => {});
   }
 }
 

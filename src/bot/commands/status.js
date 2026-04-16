@@ -1,5 +1,6 @@
 // src/bot/commands/status.js
 const { getUserByTelegramId, getSitesByUserId, getLastCheck } = require('../../db/supabase');
+const { escapeMarkdownV2 } = require('../../utils/markdown');
 
 async function handleStatus(ctx) {
   try {
@@ -21,20 +22,30 @@ async function handleStatus(ctx) {
     for (const site of sites) {
       const lastCheck = await getLastCheck(site.id);
 
+      // ✅ Escapar todos los valores
+      const escapedName = escapeMarkdownV2(site.name);
+      const escapedUrl = escapeMarkdownV2(site.url);
+
       if (!lastCheck) {
-        msg += `⚪ *${site.name}* — Sin datos aún\n`;
+        msg += `⚪ *${escapedName}* — Sin datos aún\n`;
       } else {
         const icon = lastCheck.status === 'up' ? '🟢' : '🔴';
-        msg += `${icon} *${site.name}*\n`;
-        msg += `   📌 ${site.url}\n`;
-        msg += `   └ ${lastCheck.status.toUpperCase()} | HTTP ${lastCheck.http_code ?? 'N/A'} | ${lastCheck.latency_ms}ms\n`;
+        msg += `${icon} *${escapedName}*\n`;
+        msg += `   📌 \`${escapedUrl}\`\n`;
+        msg += `   └ ${lastCheck.status.toUpperCase()} \\| HTTP ${lastCheck.http_code ?? 'N/A'} \\| ${lastCheck.latency_ms}ms\n`;
       }
     }
 
-    ctx.reply(msg, { parse_mode: 'Markdown' });
+    ctx.reply(msg, {
+      parse_mode: 'MarkdownV2',
+    }).catch((err) => {
+      console.error('Error enviando /status:', err.message);
+      // Enviar sin parse_mode si falla
+      ctx.reply(msg).catch(() => {});
+    });
   } catch (err) {
     console.error('Error en /status:', err);
-    ctx.reply('❌ Error al obtener estado.');
+    ctx.reply('❌ Error al obtener estado.').catch(() => {});
   }
 }
 

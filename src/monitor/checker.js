@@ -11,6 +11,11 @@ const {
   getUserById,
 } = require('../db/supabase');
 const { sendAlertToUser } = require('../bot/telegram');
+const {
+  escapeMarkdownV2,
+  validateMessage,
+  analyzeTelegramError,
+} = require('../utils/markdown');
 
 const TIMEOUT = parseInt(process.env.TIMEOUT_MS) || 10000;
 const LATENCY_ALERT = parseInt(process.env.LATENCY_ALERT_MS) || 3000;
@@ -73,18 +78,38 @@ async function checkSite(site) {
       console.error(`❌ Error abriendo incidente para ${site.name}:`, err.message);
     }
 
+    // ✅ Escapar todos los valores
+    const escapedName = escapeMarkdownV2(site.name);
+    const escapedUrl = escapeMarkdownV2(site.url);
+
     const emoji = status === 'timeout' ? '⏱️' : '🔴';
     const msg =
       `${emoji} *SITIO CAÍDO*\n\n` +
-      `📌 *${site.name}*\n` +
-      `🔗 ${site.url}\n` +
+      `📌 *${escapedName}*\n` +
+      `🔗 \`${escapedUrl}\`\n` +
       `📊 Estado: \`${status.toUpperCase()}\`\n` +
       (httpCode ? `🔢 HTTP: \`${httpCode}\`\n` : '') +
       `⏱ Latencia: \`${latency}ms\`\n` +
       `🕐 ${new Date().toLocaleString('es-CO')}`;
 
-    if (user) {
-      await sendAlertToUser(user.telegram_id, msg);
+    // Validar mensaje antes de enviar
+    const validation = validateMessage(msg, 'MarkdownV2');
+    if (!validation.isValid) {
+      console.warn(`⚠️  Mensaje no válido para ${escapedName}:`, validation.warnings);
+    }
+
+    if (user && user.telegram_id) {
+      try {
+        const success = await sendAlertToUser(user.telegram_id, msg);
+        if (!success) {
+          console.warn(`⚠️ No se pudo enviar alerta a ${user.telegram_id}`);
+        }
+      } catch (err) {
+        console.error(
+          `❌ Error enviando alerta de caída a ${user.telegram_id}:`,
+          err.message
+        );
+      }
     }
     console.log(`🔴 [${site.name}] CAÍDO — ${status} (${latency}ms)`);
   } else if (status === 'up' && prevState === 'down') {
@@ -96,15 +121,29 @@ async function checkSite(site) {
       console.error(`❌ Error cerrando incidente para ${site.name}:`, err.message);
     }
 
+    // ✅ Escapar todos los valores
+    const escapedName = escapeMarkdownV2(site.name);
+    const escapedUrl = escapeMarkdownV2(site.url);
+
     const msg =
       `✅ *SITIO RECUPERADO*\n\n` +
-      `📌 *${site.name}*\n` +
-      `🔗 ${site.url}\n` +
+      `📌 *${escapedName}*\n` +
+      `🔗 \`${escapedUrl}\`\n` +
       `⏱ Latencia: \`${latency}ms\`\n` +
       `🕐 ${new Date().toLocaleString('es-CO')}`;
 
-    if (user) {
-      await sendAlertToUser(user.telegram_id, msg);
+    if (user && user.telegram_id) {
+      try {
+        const success = await sendAlertToUser(user.telegram_id, msg);
+        if (!success) {
+          console.warn(`⚠️ No se pudo enviar alerta a ${user.telegram_id}`);
+        }
+      } catch (err) {
+        console.error(
+          `❌ Error enviando alerta de recuperación a ${user.telegram_id}:`,
+          err.message
+        );
+      }
     }
     console.log(`✅ [${site.name}] RECUPERADO (${latency}ms)`);
   } else {
@@ -113,23 +152,46 @@ async function checkSite(site) {
 
     // Alerta de alta latencia (solo si está up)
     if (status === 'up' && latency > LATENCY_ALERT && prevState !== 'slow') {
+      // ✅ Escapar todos los valores
+      const escapedName = escapeMarkdownV2(site.name);
+      const escapedUrl = escapeMarkdownV2(site.url);
+
       const msg =
         `⚠️ *ALTA LATENCIA*\n\n` +
-        `📌 *${site.name}*\n` +
-        `🔗 ${site.url}\n` +
-        `⏱ Latencia: \`${latency}ms\` (umbral: ${LATENCY_ALERT}ms)\n` +
+        `📌 *${escapedName}*\n` +
+        `🔗 \`${escapedUrl}\`\n` +
+        `⏱ Latencia: \`${latency}ms\` \\(umbral: ${LATENCY_ALERT}ms\\)\n` +
         `🕐 ${new Date().toLocaleString('es-CO')}`;
 
-      if (user) {
-        await sendAlertToUser(user.telegram_id, msg);
+      if (user && user.telegram_id) {
+        try {
+          const success = await sendAlertToUser(user.telegram_id, msg);
+          if (!success) {
+            console.warn(`⚠️ No se pudo enviar alerta a ${user.telegram_id}`);
+          }
+        } catch (err) {
+          console.error(
+            `❌ Error enviando alerta de latencia a ${user.telegram_id}:`,
+            err.message
+          );
+        }
       }
     }
 
     const icon = status === 'up' ? '🟢' : '🔴';
-    console.log(`${icon} [${site.name}] ${status.toUpperCase()} — HTTP ${httpCode ?? 'N/A'} — ${latency}ms`);
+    console.log(
+      `${icon} [${site.name}] ${status.toUpperCase()} — HTTP ${httpCode ?? 'N/A'} — ${latency}ms`
+    );
   }
 
-  return { id: site.id, name: site.name, url: site.url, status, httpCode, latency };
+  return {
+    id: site.id,
+    name: site.name,
+    url: site.url,
+    status,
+    httpCode,
+    latency,
+  };
 }
 
 /**
@@ -145,7 +207,17 @@ async function runChecks() {
     console.log(
       `\n🔍 Chequeando ${sites.length} sitios — ${new Date().toLocaleTimeString('es-CO')}`
     );
-    await Promise.all(sites.map(checkSite));
+
+    // Usar Promise.allSettled en lugar de Promise.all para que un error no rompa todo
+    const results = await Promise.allSettled(sites.map(checkSite));
+
+    // Contar resultados
+    const successful = results.filter((r) => r.status === 'fulfilled').length;
+    const failed = results.filter((r) => r.status === 'rejected').length;
+
+    if (failed > 0) {
+      console.warn(`⚠️ ${failed} chequeos fallaron, ${successful} exitosos`);
+    }
   } catch (err) {
     console.error('❌ Error en ciclo de chequeos:', err.message);
   }

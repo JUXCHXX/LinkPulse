@@ -1,5 +1,6 @@
 // src/bot/commands/addsite.js
 const { getUserByTelegramId, addSite } = require('../../db/supabase');
+const { escapeMarkdownV2 } = require('../../utils/markdown');
 const axios = require('axios');
 
 async function handleAddSite(ctx) {
@@ -20,7 +21,7 @@ async function handleAddSite(ctx) {
         'Ejemplos:\n' +
         '`/addsite Mi Blog https://miblog.com global`\n' +
         '`/addsite Mi API https://api.com privado`',
-        { parse_mode: 'Markdown' }
+        { parse_mode: 'MarkdownV2' }
       );
     }
 
@@ -32,7 +33,8 @@ async function handleAddSite(ctx) {
     try {
       new URL(url);
     } catch {
-      return ctx.reply(`❌ La URL "${url}" no es válida.`);
+      const escapedUrl = escapeMarkdownV2(url);
+      return ctx.reply(`❌ La URL \`${escapedUrl}\` no es válida.`);
     }
 
     // Validar que sea accesible (HEAD request rápido)
@@ -46,18 +48,31 @@ async function handleAddSite(ctx) {
     // Agregar sitio a Supabase
     const site = await addSite(user.id, name, url, visibility);
 
+    // ✅ Escapar todos los valores en la confirmación
+    const escapedName = escapeMarkdownV2(name);
+    const escapedUrl = escapeMarkdownV2(url);
+
     ctx.reply(
       `✅ Sitio agregado exitosamente\n\n` +
-      `📌 Nombre: *${name}*\n` +
-      `🔗 URL: \`${url}\`\n` +
+      `📌 Nombre: *${escapedName}*\n` +
+      `🔗 URL: \`${escapedUrl}\`\n` +
       `👁 Visibilidad: *${visibility === 'global' ? '🌐 Global' : '🔒 Privado'}*\n` +
       `🕐 Agregado: ${new Date().toLocaleString('es-CO')}\n\n` +
       `El monitoreo comenzará en el próximo ciclo.`,
-      { parse_mode: 'Markdown' }
-    );
+      { parse_mode: 'MarkdownV2' }
+    ).catch((err) => {
+      console.error('Error enviando confirmación /addsite:', err.message);
+      // Enviar sin parse_mode si falla
+      ctx.reply(
+        `✅ Sitio agregado exitosamente.\n\n` +
+        `Nombre: ${name}\n` +
+        `URL: ${url}\n` +
+        `El monitoreo comenzará en el próximo ciclo.`
+      ).catch(() => {});
+    });
   } catch (err) {
     console.error('Error en /addsite:', err);
-    ctx.reply('❌ Error al agregar sitio. Intenta más tarde.');
+    ctx.reply('❌ Error al agregar sitio. Intenta más tarde.').catch(() => {});
   }
 }
 
