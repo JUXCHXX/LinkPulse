@@ -11,6 +11,14 @@ if (!supabaseUrl || !supabaseServiceKey) {
 // Cliente de Supabase con service role key (acceso total en el backend)
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+function normalizeTelegramId(telegramId) {
+  if (telegramId === null || telegramId === undefined || telegramId === '') {
+    throw new TypeError('telegramId es requerido');
+  }
+
+  return String(telegramId).trim();
+}
+
 /**
  * Obtener usuario por telegram_id
  */
@@ -18,7 +26,7 @@ async function getUserByTelegramId(telegramId) {
   const { data, error } = await supabase
     .from('users')
     .select('*')
-    .eq('telegram_id', telegramId)
+    .eq('telegram_id', normalizeTelegramId(telegramId))
     .single();
 
   if (error && error.code !== 'PGRST116') {
@@ -35,7 +43,7 @@ async function createUser(telegramId, telegramUsername, displayName) {
     .from('users')
     .insert([
       {
-        telegram_id: telegramId,
+        telegram_id: normalizeTelegramId(telegramId),
         telegram_username: telegramUsername,
         display_name: displayName,
         created_at: new Date().toISOString(),
@@ -345,8 +353,53 @@ async function getRecentChecks(limit = 100) {
   return data;
 }
 
+async function upsertRegistrationState(telegramId, telegramUsername, state = 'awaiting_username') {
+  const { data, error } = await supabase
+    .from('telegram_registration_state')
+    .upsert(
+      {
+        telegram_id: normalizeTelegramId(telegramId),
+        telegram_username: telegramUsername || null,
+        state,
+        created_at: new Date().toISOString(),
+      },
+      { onConflict: 'telegram_id' }
+    )
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+async function getRegistrationState(telegramId, state = 'awaiting_username') {
+  const { data, error } = await supabase
+    .from('telegram_registration_state')
+    .select('*')
+    .eq('telegram_id', normalizeTelegramId(telegramId))
+    .eq('state', state)
+    .single();
+
+  if (error && error.code !== 'PGRST116') {
+    throw error;
+  }
+
+  return data || null;
+}
+
+async function clearRegistrationState(telegramId) {
+  const { error } = await supabase
+    .from('telegram_registration_state')
+    .delete()
+    .eq('telegram_id', normalizeTelegramId(telegramId));
+
+  if (error) throw error;
+}
+
 module.exports = {
   supabase,
+  supabaseClient: supabase,
+  normalizeTelegramId,
   getUserByTelegramId,
   createUser,
   isDisplayNameTaken,
@@ -367,4 +420,7 @@ module.exports = {
   getAllEnabledSites,
   getLastCheck,
   getRecentChecks,
+  upsertRegistrationState,
+  getRegistrationState,
+  clearRegistrationState,
 };

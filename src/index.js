@@ -2,17 +2,18 @@
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
-const { initBot, stopBot } = require('./bot/telegram');
+const { initBot, stopBot } = require('./bot/runtime');
 const { startMonitor } = require('./monitor/checker');
 const authRoutes = require('./routes/auth');
 const apiRoutes = require('./routes/api');
 const publicRoutes = require('./routes/public');
+const { getBootContext, logError } = require('./utils/errors');
 
 const PORT = process.env.PORT || 3000;
 
 async function start() {
   // ── Inicializar Telegram Bot ──────────────────────────────────────────────────
-  initBot(process.env.TELEGRAM_BOT_TOKEN);
+  await initBot(process.env.TELEGRAM_BOT_TOKEN);
 
   // ── Inicializar Express ───────────────────────────────────────────────────────
   const app = express();
@@ -51,7 +52,11 @@ async function start() {
   });
 }
 
+process.on('unhandledRejection', (reason) => {
+  logError('Unhandled promise rejection', reason, getBootContext());
+});
+
 start().catch((err) => {
-  console.error('❌ Error durante el startup:', err);
+  logError('Error durante el startup', err, getBootContext());
   process.exit(1);
 });

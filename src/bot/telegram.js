@@ -1,11 +1,11 @@
 // src/bot/telegram.js
 const { Telegraf } = require('telegraf');
 const {
-  escapeMarkdownV2,
   analyzeTelegramError,
   validateMessage,
 } = require('../utils/markdown');
-const { handleStart, handleUsernameInput } = require('./commands/start');
+const { BOOT_ID, getBootContext, logError } = require('../utils/errors');
+const { handleStart, handleUsernameInput } = require('./commands/registration');
 const { handleStatus } = require('./commands/status');
 const { handleUptime } = require('./commands/uptime');
 const { handleGlobal } = require('./commands/global');
@@ -14,6 +14,94 @@ const { handleMySites } = require('./commands/mysites');
 const { handleHelp } = require('./commands/help');
 
 let bot = null;
+let launchPromise = null;
+let handlersRegistered = false;
+
+function getUpdateMeta(ctx, extra = {}) {
+  return getBootContext({
+    updateId: ctx?.update?.update_id ?? null,
+    userId: ctx?.from?.id ?? null,
+    chatId: ctx?.chat?.id ?? null,
+    messageText: ctx?.message?.text ?? null,
+    ...extra,
+  });
+}
+
+async function safeReply(ctx, text, options = {}, extra = {}) {
+  if (!ctx) {
+    return null;
+  }
+
+  try {
+    return await ctx.reply(text, options);
+  } catch (err) {
+    logError('Telegram reply failed in bot middleware', err, getUpdateMeta(ctx, extra));
+    return null;
+  }
+}
+
+function registerCommand(command, handler, fallbackText) {
+  bot.command(command, async (ctx) => {
+    try {
+      return await handler(ctx);
+    } catch (err) {
+      logError(`Error en /${command}`, err, getUpdateMeta(ctx, { command }));
+      return await safeReply(ctx, fallbackText, {}, { command, stage: 'command-fallback' });
+    }
+  });
+}
+
+function registerHandlers() {
+  if (!bot || handlersRegistered) {
+    return;
+  }
+
+  bot.use(async (ctx, next) => {
+    if (ctx?.message?.text) {
+      console.log('[TG update]', getUpdateMeta(ctx));
+    }
+
+    return await next();
+  });
+
+  bot.catch(async (err, ctx) => {
+    logError('Error no capturado en bot Telegraf', err, {
+      ...getUpdateMeta(ctx),
+      telegramError: analyzeTelegramError(err),
+    });
+
+    await safeReply(
+      ctx,
+      'Ha ocurrido un error. Por favor intenta de nuevo.',
+      { reply_to_message_id: ctx?.message?.message_id },
+      { stage: 'bot.catch' }
+    );
+  });
+
+  registerCommand('start', handleStart, 'Error procesando /start. Intenta de nuevo.');
+  registerCommand('status', handleStatus, 'Error al obtener estado.');
+  registerCommand('uptime', handleUptime, 'Error al obtener estadisticas.');
+  registerCommand('global', handleGlobal, 'Error al obtener sitios publicos.');
+  registerCommand('mysites', handleMySites, 'Error al obtener tus sitios.');
+  registerCommand('addsite', handleAddSite, 'Error al agregar sitio.');
+  registerCommand('help', handleHelp, 'Error al mostrar ayuda.');
+
+  bot.on('text', async (ctx) => {
+    try {
+      return await handleUsernameInput(ctx);
+    } catch (err) {
+      logError('Error procesando entrada de texto', err, getUpdateMeta(ctx, { stage: 'bot.on(text)' }));
+      return await safeReply(
+        ctx,
+        'Error procesando tu mensaje.',
+        {},
+        { stage: 'text-fallback' }
+      );
+    }
+  });
+
+  handlersRegistered = true;
+}
 
 function initBot(token) {
   if (!token || token.includes('xxxxxx')) {
@@ -222,10 +310,4 @@ function stopBot() {
   }
 }
 
-module.exports = {
-  initBot,
-  sendAlertToUser,
-  sendDirectMessage,
-  getBot,
-  stopBot,
-};
+module.exports = require('./runtime');

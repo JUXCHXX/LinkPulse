@@ -1,10 +1,7 @@
 // src/bot/commands/start.js
 const { getUserByTelegramId, createUser, isDisplayNameTaken } = require('../../db/supabase');
 const { generateToken } = require('../../middleware/auth');
-const supabase = require('../../db/supabase').supabaseClient || require('@supabase/supabase-js').createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
+const { supabaseClient: supabase } = require('../../db/supabase');
 
 const APP_URL = process.env.APP_URL || 'https://linkpulse.railway.app';
 
@@ -281,7 +278,4 @@ function escapeForMarkdown(text) {
   return String(text).replace(/[_*[\]()~`>#+=|{}.!-]/g, '\\$&');
 }
 
-module.exports = {
-  handleStart,
-  handleUsernameInput,
-};
+module.exports = require('./registration');

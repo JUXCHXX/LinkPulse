@@ -14,7 +14,7 @@ async function handleHelp(ctx) {
     `\`/addsite Mi API https://api.com privado\`\n\n` +
     `🔗 Para acceder al dashboard web, usa \`/start\``;
 
-  ctx.reply(msg, { parse_mode: 'Markdown' });
+  return await ctx.reply(msg, { parse_mode: 'Markdown' });
 }
 
 module.exports = { handleHelp };

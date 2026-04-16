@@ -10,7 +10,7 @@ const {
   getLastCheck,
   getUserById,
 } = require('../db/supabase');
-const { sendAlertToUser } = require('../bot/telegram');
+const { sendAlertToUser } = require('../bot/runtime');
 const {
   escapeMarkdownV2,
   validateMessage,
