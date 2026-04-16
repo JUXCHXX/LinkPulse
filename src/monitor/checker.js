@@ -16,15 +16,19 @@ const {
   validateMessage,
   analyzeTelegramError,
 } = require('../utils/markdown');
+const { logError, getBootContext } = require('../utils/errors');
 
 const TIMEOUT = parseInt(process.env.TIMEOUT_MS) || 10000;
 const LATENCY_ALERT = parseInt(process.env.LATENCY_ALERT_MS) || 3000;
+const CHECK_TIMEOUT = parseInt(process.env.CHECK_TIMEOUT_MS) || 60000; // Timeout total del ciclo
 
 // Estado en memoria para detectar cambios
 const siteState = {};
+let isCheckRunning = false;
+let lastCheckTime = null;
 
 /**
- * Hacer chequeo HTTP a un sitio
+ * Hacer chequeo HTTP a un sitio con timeout
  */
 async function checkSite(site) {
   const start = Date.now();
@@ -195,21 +199,51 @@ async function checkSite(site) {
 }
 
 /**
- * Ejecutar chequeos de todos los sitios
+ * Ejecutar chequeos de todos los sitios con timeout global
  */
 async function runChecks() {
+  // Prevenir overlapping
+  if (isCheckRunning) {
+    console.warn('⚠️  Un ciclo de checks ya está en ejecución, saltando este ciclo');
+    return;
+  }
+
+  isCheckRunning = true;
+  const cycleStart = Date.now();
+
   try {
-    const sites = await getAllEnabledSites();
+    let sites = [];
+    try {
+      sites = await getAllEnabledSites();
+    } catch (err) {
+      logError('Error obteniendo sitios habilitados', err, getBootContext());
+      console.warn('⚠️ No se pudieron obtener sitios para monitorear');
+      return;
+    }
+
     if (sites.length === 0) {
       console.warn('⚠️ No hay sitios habilitados para monitorear');
       return;
     }
+
     console.log(
       `\n🔍 Chequeando ${sites.length} sitios — ${new Date().toLocaleTimeString('es-CO')}`
     );
 
-    // Usar Promise.allSettled en lugar de Promise.all para que un error no rompa todo
-    const results = await Promise.allSettled(sites.map(checkSite));
+    // Crear una promise con timeout para todo el ciclo
+    const checkPromise = Promise.allSettled(sites.map(checkSite));
+
+    // Timeout global: si tarda más que CHECK_TIMEOUT, cancelar
+    const checkWithTimeout = Promise.race([
+      checkPromise,
+      new Promise((_, reject) =>
+        setTimeout(() => {
+          reject(new Error(`Check cycle timeout after ${CHECK_TIMEOUT}ms`));
+        }, CHECK_TIMEOUT)
+      ),
+    ]);
+
+    const results = await checkWithTimeout;
 
     // Contar resultados
     const successful = results.filter((r) => r.status === 'fulfilled').length;
@@ -218,8 +252,21 @@ async function runChecks() {
     if (failed > 0) {
       console.warn(`⚠️ ${failed} chequeos fallaron, ${successful} exitosos`);
     }
+
+    lastCheckTime = Date.now();
   } catch (err) {
-    console.error('❌ Error en ciclo de chequeos:', err.message);
+    logError('Error en ciclo de chequeos', err, {
+      ...getBootContext(),
+      checkDurationMs: Date.now() - cycleStart,
+    });
+  } finally {
+    isCheckRunning = false;
+    const duration = Date.now() - cycleStart;
+    if (duration > CHECK_TIMEOUT * 0.8) {
+      console.warn(
+        `⚠️  Check cycle tardó ${duration}ms (casi en timeout de ${CHECK_TIMEOUT}ms)`
+      );
+    }
   }
 }
 
@@ -237,7 +284,26 @@ function startMonitor(interval) {
   console.log(`⏰ Monitor iniciado — Intervalo: "${cronExpr}"`);
   runChecks(); // Chequeo inmediato al arrancar
 
-  cron.schedule(cronExpr, runChecks);
+  const task = cron.schedule(cronExpr, runChecks);
+
+  // Validación: si no hay chequeos en 2 intervalos, algo está mal
+  const checkInterval = setInterval(() => {
+    if (lastCheckTime && Date.now() - lastCheckTime > 15 * 60 * 1000) {
+      console.warn(
+        '⚠️  Monitor: no hay chequeos exitosos en 15 minutos - puede estar congelado'
+      );
+    }
+  }, 5 * 60 * 1000);
+
+  return { task, checkInterval };
 }
 
-module.exports = { startMonitor, runChecks, siteState };
+function getMonitorStatus() {
+  return {
+    isRunning: !isCheckRunning,
+    lastCheckTime,
+    siteStatesCount: Object.keys(siteState).length,
+  };
+}
+
+module.exports = { startMonitor, runChecks, siteState, getMonitorStatus };

@@ -12,6 +12,7 @@ const { handleHelp } = require('./commands/help');
 let bot = null;
 let launchPromise = null;
 let handlersRegistered = false;
+let botHealthy = false;
 
 function getUpdateMeta(ctx, extra = {}) {
   return getBootContext({
@@ -99,9 +100,13 @@ function registerHandlers() {
   handlersRegistered = true;
 }
 
+/**
+ * Inicializar bot con protecciones contra múltiples lanzamientos
+ */
 async function initBot(token) {
   if (!token || token.includes('xxxxxx')) {
     console.warn('TELEGRAM_BOT_TOKEN no configurado. Bot desactivado.');
+    botHealthy = false;
     return null;
   }
 
@@ -109,6 +114,7 @@ async function initBot(token) {
     console.warn('[TG launch] initBot invocado mas de una vez. Reutilizando instancia existente.', {
       bootId: BOOT_ID,
       pid: process.pid,
+      isHealthy: botHealthy,
     });
     return await launchPromise;
   }
@@ -120,17 +126,41 @@ async function initBot(token) {
     }
 
     launchPromise = (async () => {
-      await bot.launch();
-      console.log('[TG launch] bot iniciado correctamente', getBootContext());
-      return bot;
+      try {
+        await bot.launch();
+
+        // Validación post-launch: intentar una operación básica
+        try {
+          const me = await bot.telegram.getMe();
+          console.log('[TG launch] bot iniciado correctamente', {
+            ...getBootContext(),
+            botName: me.first_name,
+            botUsername: me.username,
+          });
+          botHealthy = true;
+          return bot;
+        } catch (validateErr) {
+          logError('Bot iniciado pero validación fallida', validateErr, getBootContext());
+          botHealthy = false;
+          return bot; // Continuar igualmente
+        }
+      } catch (launchErr) {
+        botHealthy = false;
+        logError('Error iniciando bot Telegram', launchErr, {
+          ...getBootContext(),
+          telegramError: analyzeTelegramError(launchErr),
+        });
+        throw launchErr;
+      }
     })().catch((err) => {
-      logError('Error iniciando bot Telegram', err, {
+      logError('Promise de launch del bot rechazada', err, {
         ...getBootContext(),
         telegramError: analyzeTelegramError(err),
       });
       bot = null;
       launchPromise = null;
       handlersRegistered = false;
+      botHealthy = false;
       throw err;
     });
 
@@ -140,13 +170,14 @@ async function initBot(token) {
     bot = null;
     launchPromise = null;
     handlersRegistered = false;
+    botHealthy = false;
     throw err;
   }
 }
 
 async function sendAlertToUser(telegramId, message) {
-  if (!bot) {
-    console.warn('Bot no inicializado. No se puede enviar alerta.');
+  if (!bot || !botHealthy) {
+    console.warn('Bot no inicializado o no está healthy. No se puede enviar alerta.');
     return false;
   }
 
@@ -193,7 +224,7 @@ async function sendAlertToUser(telegramId, message) {
 }
 
 async function sendDirectMessage(telegramId, message, options = {}) {
-  if (!bot || !telegramId || !message) {
+  if (!bot || !botHealthy || !telegramId || !message) {
     return false;
   }
 
@@ -214,10 +245,15 @@ function getBot() {
   return bot;
 }
 
+function isBotHealthy() {
+  return bot !== null && botHealthy;
+}
+
 function stopBot() {
   if (!bot) {
     launchPromise = null;
     handlersRegistered = false;
+    botHealthy = false;
     return;
   }
 
@@ -225,6 +261,7 @@ function stopBot() {
   bot = null;
   launchPromise = null;
   handlersRegistered = false;
+  botHealthy = false;
 
   try {
     currentBot.stop('SIGTERM');
@@ -239,5 +276,6 @@ module.exports = {
   sendAlertToUser,
   sendDirectMessage,
   getBot,
+  isBotHealthy,
   stopBot,
 };

@@ -1,6 +1,7 @@
 // src/routes/api.js
 const express = require('express');
 const { verifyJWT } = require('../middleware/auth');
+const { logError, getBootContext } = require('../utils/errors');
 const {
   getSitesByUserId,
   getSiteById,
@@ -24,7 +25,10 @@ router.get('/sites', verifyJWT, async (req, res) => {
     const sites = await getSitesByUserId(req.user.userId);
     res.json(sites);
   } catch (err) {
-    console.error('Error en GET /sites:', err);
+    logError('Error en GET /sites', err, {
+      ...getBootContext(),
+      userId: req.user.userId,
+    });
     res.status(500).json({ error: 'Error al obtener sitios' });
   }
 });
@@ -50,7 +54,11 @@ router.get('/sites/:siteId', verifyJWT, async (req, res) => {
       latencyHistory,
     });
   } catch (err) {
-    console.error('Error en GET /sites/:siteId:', err);
+    logError('Error en GET /sites/:siteId', err, {
+      ...getBootContext(),
+      siteId: req.params.siteId,
+      userId: req.user.userId,
+    });
     res.status(500).json({ error: 'Error al obtener sitio' });
   }
 });
@@ -86,7 +94,10 @@ router.post('/sites', verifyJWT, async (req, res) => {
       site,
     });
   } catch (err) {
-    console.error('Error en POST /sites:', err);
+    logError('Error en POST /sites', err, {
+      ...getBootContext(),
+      userId: req.user.userId,
+    });
     res.status(500).json({ error: 'Error al crear sitio' });
   }
 });
@@ -117,7 +128,11 @@ router.put('/sites/:siteId', verifyJWT, async (req, res) => {
       visibility,
     });
   } catch (err) {
-    console.error('Error en PUT /sites/:siteId:', err);
+    logError('Error en PUT /sites/:siteId', err, {
+      ...getBootContext(),
+      siteId: req.params.siteId,
+      userId: req.user.userId,
+    });
     res.status(500).json({ error: 'Error al actualizar sitio' });
   }
 });
@@ -141,7 +156,11 @@ router.delete('/sites/:siteId', verifyJWT, async (req, res) => {
       siteId: site.id,
     });
   } catch (err) {
-    console.error('Error en DELETE /sites/:siteId:', err);
+    logError('Error en DELETE /sites/:siteId', err, {
+      ...getBootContext(),
+      siteId: req.params.siteId,
+      userId: req.user.userId,
+    });
     res.status(500).json({ error: 'Error al eliminar sitio' });
   }
 });
@@ -162,7 +181,11 @@ router.get('/latency/:siteId', verifyJWT, async (req, res) => {
     const history = await getLatencyHistory(site.id, limit);
     res.json(history);
   } catch (err) {
-    console.error('Error en GET /latency/:siteId:', err);
+    logError('Error en GET /latency/:siteId', err, {
+      ...getBootContext(),
+      siteId: req.params.siteId,
+      userId: req.user.userId,
+    });
     res.status(500).json({ error: 'Error al obtener historial' });
   }
 });
@@ -183,7 +206,10 @@ router.get('/checks', verifyJWT, async (req, res) => {
 
     res.json(filtered);
   } catch (err) {
-    console.error('Error en GET /checks:', err);
+    logError('Error en GET /checks', err, {
+      ...getBootContext(),
+      userId: req.user.userId,
+    });
     res.status(500).json({ error: 'Error al obtener chequeos' });
   }
 });
